@@ -1082,6 +1082,7 @@ class AWSQueryConnection(AWSAuthConnection):
         http_request = self.build_base_http_request(verb, path, None,
                                                     params, {}, '',
                                                     self.host)
+	print str(http_request)
         if action:
             http_request.params['Action'] = action
         if self.APIVersion:
