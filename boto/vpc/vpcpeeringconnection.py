@@ -32,8 +32,8 @@ import xml.sax
 class Status(TaggedEC2Object):
     def __init__(self, connection=None):
         super(Status, self).__init__(connection)
-	self.code = None
-	self.message = None
+        self.code = None
+        self.message = None
 
     def startElement(self, name, attrs, connection):
         result = super(Status, self).startElement(name, attrs, connection)
@@ -46,17 +46,17 @@ class VPCPeeringConnection(TaggedEC2Object):
 
     def __init__(self, connection=None):
         super(VPCPeeringConnection, self).__init__(connection)
-	self.APIVersion = '2014-02-01'
+        self.APIVersion = '2014-02-01'
         self.id = None
-	self.requesterVpc = None
-	self.accepterVpc = None
-	self.status = None
-	self.expirationTime = None
+        self.requesterVpc = None
+        self.accepterVpc = None
+        self.status = None
+        self.expirationTime = None
 
     def __repr__(self):
         return 'VPCPeeringConnection:%s' % self.id
-    """
-	<requesterVpcInfo>
+        """
+        <requesterVpcInfo>
             <ownerId>777788889999</ownerId>
             <vpcId>vpc-vpc-1a2b3c4d</vpcId>
             <cidrBlock>10.0.0.0/28</cidrBlock>
@@ -70,7 +70,7 @@ class VPCPeeringConnection(TaggedEC2Object):
             <message>Initiating Request to 123456789012</message>
         </status>
         <expirationTime>2014-02-18T14:37:25.000Z</expirationTime>
-     """
+         """
 
     def startElement(self, name, attrs, connection):
         result = super(VPCPeeringConnection, self).startElement(name, attrs, connection)
@@ -80,13 +80,13 @@ class VPCPeeringConnection(TaggedEC2Object):
             return result
 
         if name == 'requesterVpcInfo':
-	    self.requesterVpc = VPCPeeringConnectionInfo()
+            self.requesterVpc = VPCPeeringConnectionInfo()
             return self.requesterVpc
         elif name == 'accepterVpcInfo':
-	    self.accepterVpc = VPCPeeringConnectionInfo()
+            self.accepterVpc = VPCPeeringConnectionInfo()
             return self.accepterVpc
-	elif name == 'status':
-	    self.status = Status()
+        elif name == 'status':
+            self.status = Status()
             return self.status
         else:
             return None
