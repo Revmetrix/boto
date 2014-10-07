@@ -26,6 +26,7 @@ Represents a connection to the EC2 service.
 from boto.ec2.connection import EC2Connection
 from boto.resultset import ResultSet
 from boto.vpc.vpc import VPC
+from boto.vpc.vpcpeeringconnection import VPCPeeringConnection
 from boto.vpc.customergateway import CustomerGateway
 from boto.vpc.networkacl import NetworkAcl
 from boto.vpc.routetable import RouteTable
@@ -108,6 +109,41 @@ class VPCConnection(EC2Connection):
         if dry_run:
             params['DryRun'] = 'true'
         return self.get_list('DescribeVpcs', params, [('item', VPC)])
+
+    def describe_vpc_peering_connections(self, filters=None, dry_run=False):
+        """
+        List VPC peering requests
+        """
+        params = {}
+        if filters:
+            self.build_filter_params(params, dict(filters))
+        if dry_run:
+            params['DryRun'] = 'true'
+        self.APIVersion = '2014-02-01'
+        return self.get_list('DescribeVpcPeeringConnections', params, [('item', VPCPeeringConnection)])
+
+    def accept_vpc_peering_connection_request(self, vpcId, dry_run=False):
+        """
+        Accept a VPC peering request
+        """
+        params = {'VpcPeeringConnectionId' : vpcId}
+        if dry_run:
+            params['DryRun'] = 'true'
+        self.APIVersion = '2014-02-01'
+        return self.get_object('AcceptVpcPeeringConnection', params, VPCPeeringConnection)
+
+    def create_vpc_peering_connection(self, vpcId, peerVpcId, peerOwnerId=None, dry_run=False):
+        """
+        Create a new VPC peering connection
+        """
+        params = {'VpcId' : vpcId, 'PeerVpcId' : peerVpcId}
+        
+        if peerOwnerId is not None:
+            params['PeerOwnerId'] = peerOwnerId
+        if dry_run:
+            params['DryRun'] = 'true'
+        self.APIVersion = '2014-02-01'
+        return self.get_object('CreateVpcPeeringConnection', params, VPCPeeringConnection)
 
     def create_vpc(self, cidr_block, instance_tenancy=None, dry_run=False):
         """
@@ -388,8 +424,8 @@ class VPCConnection(EC2Connection):
             association_id, route_table_id, dry_run=dry_run).newAssociationId
 
     def create_route(self, route_table_id, destination_cidr_block,
-                     gateway_id=None, instance_id=None, interface_id=None,
-                     dry_run=False):
+                     gateway_id=None, instance_id=None, interface_id=None, 
+                     vpc_peering_connection_id=None, dry_run=False):
         """
         Creates a new route in the route table within a VPC. The route's target
         can be either a gateway attached to the VPC or a NAT instance in the
@@ -411,6 +447,9 @@ class VPCConnection(EC2Connection):
         :type interface_id: str
         :param interface_id: Allows routing to network interface attachments.
 
+        :type vpc_peering_connection_id: str
+        :param interface_id: Allows routing to VPCs.
+
         :type dry_run: bool
         :param dry_run: Set to True if the operation should not actually run.
 
@@ -428,6 +467,8 @@ class VPCConnection(EC2Connection):
             params['InstanceId'] = instance_id
         elif interface_id is not None:
             params['NetworkInterfaceId'] = interface_id
+        elif vpc_peering_connection_id is not None:
+            params['VpcPeeringConnectionId'] = vpc_peering_connection_id
         if dry_run:
             params['DryRun'] = 'true'
 

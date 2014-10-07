@@ -374,7 +374,7 @@ class HTTPRequest(object):
             val = self.headers[key]
             if isinstance(val, unicode):
                 safe = '!"#$%&\'()*+,/:;<=>?@[\\]^`{|}~'
-                self.headers[key] = urllib.quote_plus(val.encode('utf-8'), safe)
+                self.headers[key] = urllib.quote(val.encode('utf-8'), safe)
 
         connection._auth_handler.add_auth(self, **kwargs)
 
@@ -1082,6 +1082,7 @@ class AWSQueryConnection(AWSAuthConnection):
         http_request = self.build_base_http_request(verb, path, None,
                                                     params, {}, '',
                                                     self.host)
+	print str(http_request)
         if action:
             http_request.params['Action'] = action
         if self.APIVersion:

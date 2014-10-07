@@ -7,7 +7,8 @@ from boto.dynamodb2.fields import (HashKey, RangeKey,
 from boto.dynamodb2.items import Item
 from boto.dynamodb2.layer1 import DynamoDBConnection
 from boto.dynamodb2.results import ResultSet, BatchGetResultSet
-from boto.dynamodb2.types import Dynamizer, FILTER_OPERATORS, QUERY_OPERATORS
+from boto.dynamodb2.types import (Dynamizer, FILTER_OPERATORS, QUERY_OPERATORS,
+                                  STRING)
 from boto.exception import JSONResponseError
 
 
@@ -232,18 +233,29 @@ class Table(object):
         )
         return table
 
-    def _introspect_schema(self, raw_schema):
+    def _introspect_schema(self, raw_schema, raw_attributes=None):
         """
         Given a raw schema structure back from a DynamoDB response, parse
         out & build the high-level Python objects that represent them.
         """
         schema = []
+        sane_attributes = {}
+
+        if raw_attributes:
+            for field in raw_attributes:
+                sane_attributes[field['AttributeName']] = field['AttributeType']
 
         for field in raw_schema:
+            data_type = sane_attributes.get(field['AttributeName'], STRING)
+
             if field['KeyType'] == 'HASH':
-                schema.append(HashKey(field['AttributeName']))
+                schema.append(
+                    HashKey(field['AttributeName'], data_type=data_type)
+                )
             elif field['KeyType'] == 'RANGE':
-                schema.append(RangeKey(field['AttributeName']))
+                schema.append(
+                    RangeKey(field['AttributeName'], data_type=data_type)
+                )
             else:
                 raise exceptions.UnknownSchemaFieldError(
                     "%s was seen, but is unknown. Please report this at "
@@ -280,7 +292,7 @@ class Table(object):
                 )
 
             name = field['IndexName']
-            kwargs['parts'] = self._introspect_schema(field['KeySchema'])
+            kwargs['parts'] = self._introspect_schema(field['KeySchema'], None)
             indexes.append(index_klass(name, **kwargs))
 
         return indexes
@@ -319,7 +331,8 @@ class Table(object):
         if not self.schema:
             # Since we have the data, build the schema.
             raw_schema = result['Table'].get('KeySchema', [])
-            self.schema = self._introspect_schema(raw_schema)
+            raw_attributes = result['Table'].get('AttributeDefinitions', [])
+            self.schema = self._introspect_schema(raw_schema, raw_attributes)
 
         if not self.indexes:
             # Build the index information as well.
@@ -803,6 +816,20 @@ class Table(object):
     def query(self, limit=None, index=None, reverse=False, consistent=False,
               attributes=None, max_page_size=None, **filter_kwargs):
         """
+        **WARNING:** This method is provided **strictly** for
+        backward-compatibility. It returns results in an incorrect order.
+
+        If you are writing new code, please use ``Table.query_2``.
+        """
+        reverse = not reverse
+        return self.query_2(limit=limit, index=index, reverse=reverse,
+                            consistent=consistent, attributes=attributes,
+                            max_page_size=max_page_size, **filter_kwargs)
+
+    def query_2(self, limit=None, index=None, reverse=False,
+                consistent=False, attributes=None, max_page_size=None,
+                **filter_kwargs):
+        """
         Queries for a set of matching items in a DynamoDB table.
 
         Queries can be performed against a hash key, a hash+range key or
@@ -824,7 +851,7 @@ class Table(object):
         (Default: ``None``)
 
         Optionally accepts a ``reverse`` parameter, which will present the
-        results in reverse order. (Default: ``None`` - normal order)
+        results in reverse order. (Default: ``False`` - normal order)
 
         Optionally accepts a ``consistent`` parameter, which should be a
         boolean. If you provide ``True``, it will force a consistent read of
@@ -975,11 +1002,13 @@ class Table(object):
         kwargs = {
             'limit': limit,
             'index_name': index,
-            'scan_index_forward': reverse,
             'consistent_read': consistent,
             'select': select,
-            'attributes_to_get': attributes_to_get
+            'attributes_to_get': attributes_to_get,
         }
+
+        if reverse:
+            kwargs['scan_index_forward'] = False
 
         if exclusive_start_key:
             kwargs['exclusive_start_key'] = {}
