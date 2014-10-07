@@ -23,8 +23,8 @@
 
 from boto.connection import AWSQueryConnection
 from boto.regioninfo import RegionInfo
-from credentials import Credentials, FederationToken, AssumedRole
-from credentials import DecodeAuthorizationMessage
+from boto.sts.credentials import Credentials, FederationToken, AssumedRole
+from boto.sts.credentials import DecodeAuthorizationMessage
 import boto
 import boto.utils
 import datetime
@@ -92,7 +92,7 @@ class STSConnection(AWSQueryConnection):
         if self.anon:
             return ['pure-query']
         else:
-            return ['sign-v2']
+            return ['hmac-v4']
 
     def _check_token_cache(self, token_key, duration=None, window_seconds=60):
         token = _session_token_cache.get(token_key, None)

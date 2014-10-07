@@ -467,6 +467,8 @@ class Table(object):
         should be fetched)
 
         Returns an ``Item`` instance containing all the data for that record.
+        
+        Raises an ``ItemNotFound`` exception if the item is not found.
 
         Example::
 
@@ -648,16 +650,35 @@ class Table(object):
         self.connection.update_item(self.table_name, raw_key, item_data, **kwargs)
         return True
 
-    def delete_item(self, **kwargs):
+    def delete_item(self, expected=None, conditional_operator=None, **kwargs):
         """
-        Deletes an item in DynamoDB.
+        Deletes a single item. You can perform a conditional delete operation
+        that deletes the item if it exists, or if it has an expected attribute
+        value.
+
+        Conditional deletes are useful for only deleting items if specific
+        conditions are met. If those conditions are met, DynamoDB performs
+        the delete. Otherwise, the item is not deleted.
+
+        To specify the expected attribute values of the item, you can pass a
+        dictionary of conditions to ``expected``. Each condition should follow
+        the pattern ``<attributename>__<comparison_operator>=<value_to_expect>``.
 
         **IMPORTANT** - Be careful when using this method, there is no undo.
 
         To specify the key of the item you'd like to get, you can specify the
         key attributes as kwargs.
 
-        Returns ``True`` on success.
+        Optionally accepts an ``expected`` parameter which is a dictionary of
+        expected attribute value conditions.
+
+        Optionally accepts a ``conditional_operator`` which applies to the
+        expected attribute value conditions:
+
+        + `AND` - If all of the conditions evaluate to true (default)
+        + `OR` - True if at least one condition evaluates to true
+
+        Returns ``True`` on success, ``False`` on failed conditional delete.
 
         Example::
 
@@ -676,9 +697,21 @@ class Table(object):
             ... })
             True
 
+            # Conditional delete
+            >>> users.delete_item(username='johndoe',
+            ...                   expected={'balance__eq': 0})
+            True
         """
+        expected = self._build_filters(expected, using=FILTER_OPERATORS)
         raw_key = self._encode_keys(kwargs)
-        self.connection.delete_item(self.table_name, raw_key)
+
+        try:
+            self.connection.delete_item(self.table_name, raw_key,
+                                        expected=expected,
+                                        conditional_operator=conditional_operator)
+        except exceptions.ConditionalCheckFailedException:
+            return False
+
         return True
 
     def get_key_fields(self):
@@ -757,6 +790,9 @@ class Table(object):
         An internal method for taking query/scan-style ``**kwargs`` & turning
         them into the raw structure DynamoDB expects for filtering.
         """
+        if filter_kwargs is None:
+            return
+
         filters = {}
 
         for field_and_op, value in filter_kwargs.items():
@@ -828,19 +864,22 @@ class Table(object):
 
     def query_2(self, limit=None, index=None, reverse=False,
                 consistent=False, attributes=None, max_page_size=None,
+                query_filter=None, conditional_operator=None,
                 **filter_kwargs):
         """
         Queries for a set of matching items in a DynamoDB table.
 
         Queries can be performed against a hash key, a hash+range key or
-        against any data stored in your local secondary indexes.
+        against any data stored in your local secondary indexes. Query filters
+        can be used to filter on arbitrary fields.
 
         **Note** - You can not query against arbitrary fields within the data
-        stored in DynamoDB.
+        stored in DynamoDB unless you specify ``query_filter`` values.
 
         To specify the filters of the items you'd like to get, you can specify
         the filters as kwargs. Each filter kwarg should follow the pattern
-        ``<fieldname>__<filter_operation>=<value_to_look_for>``.
+        ``<fieldname>__<filter_operation>=<value_to_look_for>``. Query filters
+        are specified in the same way.
 
         Optionally accepts a ``limit`` parameter, which should be an integer
         count of the total number of items to return. (Default: ``None`` -
@@ -868,6 +907,15 @@ class Table(object):
         **per-request**. This is useful in making faster requests & prevent
         the scan from drowning out other queries. (Default: ``None`` -
         fetch as many as DynamoDB will return)
+
+        Optionally accepts a ``query_filter`` which is a dictionary of filter
+        conditions against any arbitrary field in the returned data.
+
+        Optionally accepts a ``conditional_operator`` which applies to the
+        query filter conditions:
+
+        + `AND` - True if all filter conditions evaluate to true (default)
+        + `OR` - True if at least one filter condition evaluates to true
 
         Returns a ``ResultSet``, which transparently handles the pagination of
         results you get back.
@@ -907,6 +955,18 @@ class Table(object):
             'John'
             'Fred'
 
+            # Filter by non-indexed field(s)
+            >>> results = users.query(
+            ...     last_name__eq='Doe',
+            ...     reverse=True,
+            ...     query_filter={
+            ...         'first_name__beginswith': 'A'
+            ...     }
+            ... )
+            >>> for res in results:
+            ...     print res['first_name'] + ' ' + res['last_name']
+            'Alice Doe'
+
         """
         if self.schema:
             if len(self.schema) == 1:
@@ -935,20 +995,26 @@ class Table(object):
             'consistent': consistent,
             'select': select,
             'attributes_to_get': attributes,
+            'query_filter': query_filter,
+            'conditional_operator': conditional_operator,
         })
         results.to_call(self._query, **kwargs)
         return results
 
-    def query_count(self, index=None, consistent=False, **filter_kwargs):
+    def query_count(self, index=None, consistent=False, conditional_operator=None,
+                    query_filter=None, scan_index_forward=True, limit=None,
+                    **filter_kwargs):
         """
         Queries the exact count of matching items in a DynamoDB table.
 
         Queries can be performed against a hash key, a hash+range key or
-        against any data stored in your local secondary indexes.
+        against any data stored in your local secondary indexes. Query filters
+        can be used to filter on arbitrary fields.
 
         To specify the filters of the items you'd like to get, you can specify
         the filters as kwargs. Each filter kwarg should follow the pattern
-        ``<fieldname>__<filter_operation>=<value_to_look_for>``.
+        ``<fieldname>__<filter_operation>=<value_to_look_for>``. Query filters
+        are specified in the same way.
 
         Optionally accepts an ``index`` parameter, which should be a string of
         name of the local secondary index you want to query against.
@@ -959,8 +1025,33 @@ class Table(object):
         the data (more expensive). (Default: ``False`` - use eventually
         consistent reads)
 
+        Optionally accepts a ``query_filter`` which is a dictionary of filter
+        conditions against any arbitrary field in the returned data.
+
+        Optionally accepts a ``conditional_operator`` which applies to the
+        query filter conditions:
+
+        + `AND` - True if all filter conditions evaluate to true (default)
+        + `OR` - True if at least one filter condition evaluates to true
+
         Returns an integer which represents the exact amount of matched
         items.
+
+        :type scan_index_forward: boolean
+        :param scan_index_forward: Specifies ascending (true) or descending
+            (false) traversal of the index. DynamoDB returns results reflecting
+            the requested order determined by the range key. If the data type
+            is Number, the results are returned in numeric order. For String,
+            the results are returned in order of ASCII character code values.
+            For Binary, DynamoDB treats each byte of the binary data as
+            unsigned when it compares binary values.
+
+        If ScanIndexForward is not specified, the results are returned in
+            ascending order.
+
+        :type limit: integer
+        :param limit: The maximum number of items to evaluate (not necessarily
+            the number of matching items).
 
         Example::
 
@@ -983,18 +1074,27 @@ class Table(object):
             using=QUERY_OPERATORS
         )
 
+        built_query_filter = self._build_filters(
+            query_filter,
+            using=FILTER_OPERATORS
+        )
+
         raw_results = self.connection.query(
             self.table_name,
             index_name=index,
             consistent_read=consistent,
             select='COUNT',
             key_conditions=key_conditions,
+            query_filter=built_query_filter,
+            conditional_operator=conditional_operator,
+            limit=limit,
+            scan_index_forward=scan_index_forward,
         )
         return int(raw_results.get('Count', 0))
 
     def _query(self, limit=None, index=None, reverse=False, consistent=False,
                exclusive_start_key=None, select=None, attributes_to_get=None,
-               **filter_kwargs):
+               query_filter=None, conditional_operator=None, **filter_kwargs):
         """
         The internal method that performs the actual queries. Used extensively
         by ``ResultSet`` to perform each (paginated) request.
@@ -1005,6 +1105,7 @@ class Table(object):
             'consistent_read': consistent,
             'select': select,
             'attributes_to_get': attributes_to_get,
+            'conditional_operator': conditional_operator,
         }
 
         if reverse:
@@ -1021,6 +1122,11 @@ class Table(object):
         kwargs['key_conditions'] = self._build_filters(
             filter_kwargs,
             using=QUERY_OPERATORS
+        )
+
+        kwargs['query_filter'] = self._build_filters(
+            query_filter,
+            using=FILTER_OPERATORS
         )
 
         raw_results = self.connection.query(
@@ -1049,13 +1155,14 @@ class Table(object):
         }
 
     def scan(self, limit=None, segment=None, total_segments=None,
-             max_page_size=None, attributes=None, **filter_kwargs):
+             max_page_size=None, attributes=None, conditional_operator=None,
+             **filter_kwargs):
         """
         Scans across all items within a DynamoDB table.
 
         Scans can be performed against a hash key or a hash+range key. You can
         additionally filter the results after the table has been read but
-        before the response is returned.
+        before the response is returned by using query filters.
 
         To specify the filters of the items you'd like to get, you can specify
         the filters as kwargs. Each filter kwarg should follow the pattern
@@ -1120,12 +1227,14 @@ class Table(object):
             'segment': segment,
             'total_segments': total_segments,
             'attributes': attributes,
+            'conditional_operator': conditional_operator,
         })
         results.to_call(self._scan, **kwargs)
         return results
 
     def _scan(self, limit=None, exclusive_start_key=None, segment=None,
-              total_segments=None, attributes=None, **filter_kwargs):
+              total_segments=None, attributes=None, conditional_operator=None,
+              **filter_kwargs):
         """
         The internal method that performs the actual scan. Used extensively
         by ``ResultSet`` to perform each (paginated) request.
@@ -1135,6 +1244,7 @@ class Table(object):
             'segment': segment,
             'total_segments': total_segments,
             'attributes_to_get': attributes,
+            'conditional_operator': conditional_operator,
         }
 
         if exclusive_start_key:
@@ -1175,7 +1285,7 @@ class Table(object):
             'last_key': last_key,
         }
 
-    def batch_get(self, keys, consistent=False):
+    def batch_get(self, keys, consistent=False, attributes=None):
         """
         Fetches many specific items in batch from a table.
 
@@ -1185,6 +1295,10 @@ class Table(object):
         Optionally accepts a ``consistent`` parameter, which should be a
         boolean. If you provide ``True``, a strongly consistent read will be
         used. (Default: False)
+
+        Optionally accepts an ``attributes`` parameter, which should be a
+        tuple. If you provide any attributes only these will be fetched
+        from DynamoDB.
 
         Returns a ``ResultSet``, which transparently handles the pagination of
         results you get back.
@@ -1212,10 +1326,10 @@ class Table(object):
         # We pass the keys to the constructor instead, so it can maintain it's
         # own internal state as to what keys have been processed.
         results = BatchGetResultSet(keys=keys, max_batch_get=self.max_batch_get)
-        results.to_call(self._batch_get, consistent=False)
+        results.to_call(self._batch_get, consistent=consistent, attributes=attributes)
         return results
 
-    def _batch_get(self, keys, consistent=False):
+    def _batch_get(self, keys, consistent=False, attributes=None):
         """
         The internal method that performs the actual batch get. Used extensively
         by ``BatchGetResultSet`` to perform each (paginated) request.
@@ -1228,6 +1342,9 @@ class Table(object):
 
         if consistent:
             items[self.table_name]['ConsistentRead'] = True
+
+        if attributes is not None:
+            items[self.table_name]['AttributesToGet'] = attributes
 
         for key_data in keys:
             raw_key = {}
